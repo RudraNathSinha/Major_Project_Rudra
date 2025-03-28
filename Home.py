@@ -25,7 +25,7 @@ Note: This file must be located in the MAJOR_PROJECT directory within the reposi
 """
 
 import streamlit as st
-import plotly.graph_objects as go
+# import plotly.graph_objects as go
 
 # Page configuration
 st.set_page_config(
