@@ -18,20 +18,30 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from PIL import ImageEnhance, ImageFilter
 import plotly.figure_factory as ff
+from skimage import io as skio  # Rename skimage.io import to avoid conflict
+from skimage import color, filters, feature, measure
+from skimage.transform import resize
+from skimage.draw import circle_perimeter
+from skimage.transform import hough_circle, hough_circle_peaks
+import numpy as np
+import pandas as pd
+from PIL import Image
+from io import BytesIO  # Add this import
 
 # Create directory for saved images
 if not os.path.exists('saved_images'):
     os.makedirs('saved_images')
 
 def image_to_bytes(image: Image.Image) -> bytes:
-    img_bytes_io = io.BytesIO()
-    image.save(img_bytes_io, format="PNG")
-    return img_bytes_io.getvalue()
+    """Convert PIL Image to bytes."""
+    img_bytes = BytesIO()  # Use BytesIO from io module
+    image.save(img_bytes, format="PNG")
+    return img_bytes.getvalue()
 
 @st.cache_data
 def analyze_image(image_bytes: bytes, bubble_params: dict, scale_factor: float):
     """Analyze image to detect bubbles."""
-    image = Image.open(io.BytesIO(image_bytes))
+    image = Image.open(BytesIO(image_bytes))  # Use BytesIO directly
     img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
     orig_height, orig_width = img.shape[:2]
 
@@ -53,6 +63,56 @@ def analyze_image(image_bytes: bytes, bubble_params: dict, scale_factor: float):
     )
 
     return circles, processed_img, scale, img.shape[:2]
+
+@st.cache_data
+def analyze_image_with_skimage(image_bytes: bytes, bubble_params: dict, scale_factor: float):
+    """Analyze image to detect bubbles using scikit-image."""
+    image = Image.open(BytesIO(image_bytes))  # Use BytesIO directly
+    img = np.array(image)
+    orig_height, orig_width = img.shape[:2]
+
+    # Convert to grayscale
+    gray = color.rgb2gray(img)
+
+    # Apply Gaussian blur
+    blurred = filters.gaussian(gray, sigma=2)
+
+    # Detect edges using Canny edge detection
+    edges = feature.canny(blurred, sigma=2)
+
+    # Detect circles using Hough Transform
+    hough_radii = np.arange(bubble_params['minRadius'], bubble_params['maxRadius'], 2)
+    hough_res = hough_circle(edges, hough_radii)
+
+    # Select the most prominent circles
+    accums, cx, cy, radii = hough_circle_peaks(
+        hough_res, hough_radii, total_num_peaks=100
+    )
+
+    # Create a DataFrame for bubble metrics
+    bubble_data = []
+    for x, y, r in zip(cx, cy, radii):
+        bubble_data.append({
+            'x': x,
+            'y': y,
+            'radius': r,
+            'diameter_px': 2 * r,
+            'diameter_mm': (2 * r) * (10 / scale_factor),
+            'diameter_cm': (2 * r) / scale_factor,
+        })
+
+    df_metrics = pd.DataFrame(bubble_data)
+    df_metrics['Area (cm²)'] = np.pi * (df_metrics['diameter_cm'] / 2) ** 2
+    df_metrics = df_metrics.sort_values(by='diameter_px', ascending=False)
+    df_metrics['Rank'] = range(1, len(df_metrics) + 1)
+
+    # Create marked image
+    marked_image = img.copy()
+    for x, y, r in zip(cx, cy, radii):
+        rr, cc = circle_perimeter(y, x, r)
+        marked_image[rr, cc] = (255, 0, 0)  # Mark circles in red
+
+    return df_metrics, marked_image
 
 def get_saved_images():
     """Retrieve list of saved images."""
@@ -379,4 +439,4 @@ if __name__ == "__main__":
     )
     main()
 
-# streamlit run /workspaces/Prsnl_APP/MAJOR_PROJECT/2_Bubble_Analysis.py --server.enableCORS false --server.enableXsrfProtection false
+# streamlit run /workspaces/Prsnl_APP/MAJOR_PROJECT/pages/Bubble_Analysis.py --server.enableCORS false --server.enableXsrfProtection false
